@@ -29,7 +29,7 @@ jobs:
 
     - name: Build the executable
       run: |
-        pyinstaller -F -w main.py
+        pyinstaller -F -w -i favicon.ico main.py
 
     - name: Archive the build output
       uses: actions/upload-artifact@v4
