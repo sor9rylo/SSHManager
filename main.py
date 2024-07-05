@@ -1,8 +1,25 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QCheckBox
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import paramiko
 import os
+
+class Worker(QThread):
+    output = pyqtSignal(str)
+    result = pyqtSignal(int, int)
+
+    def __init__(self, function, *args, **kwargs):
+        super().__init__()
+        self.function = function
+        self.args = args
+        self.kwargs = kwargs
+
+    def run(self):
+        try:
+            result = self.function(*self.args, **self.kwargs)
+            self.result.emit(*result)
+        except Exception as e:
+            self.output.emit(f"任务执行中出错: {e}")
 
 class SSHKeyManagerApp(QWidget):
     def __init__(self):
@@ -55,6 +72,12 @@ class SSHKeyManagerApp(QWidget):
         self.disable_password_login_button.clicked.connect(self.disable_ssh_password_login)
         self.enable_password_login_button = QPushButton('开启SSH密码登录')
         self.enable_password_login_button.clicked.connect(self.enable_ssh_password_login)
+        # 开启公钥登录
+        self.disable_Pubkey_login_button = QPushButton('关闭SSH公钥登录')
+        self.disable_Pubkey_login_button.clicked.connect(self.disable_ssh_Pubkey_login)
+        self.enable_Pubkey_login_button = QPushButton('开启SSH公钥登录')
+        self.enable_Pubkey_login_button.clicked.connect(self.enable_ssh_Pubkey_login)
+
         self.clear_output_button = QPushButton('清理输出')
         self.clear_output_button.clicked.connect(self.clear_output)
 
@@ -76,6 +99,8 @@ class SSHKeyManagerApp(QWidget):
         main_layout.addLayout(self.create_hbox_layout(self.add_button, self.test_connection_button))
         main_layout.addLayout(self.create_hbox_layout(self.delete_key_button, self.delete_all_keys_button))
         main_layout.addLayout(self.create_hbox_layout(self.disable_password_login_button, self.enable_password_login_button))
+        # 公钥登录布局
+        main_layout.addLayout(self.create_hbox_layout(self.disable_Pubkey_login_button, self.enable_Pubkey_login_button))
         main_layout.addWidget(self.clear_output_button)
         main_layout.addWidget(self.output_text)
 
@@ -132,8 +157,13 @@ class SSHKeyManagerApp(QWidget):
             return
 
         use_private_key = self.use_private_key_checkbox.isChecked()
-        success_count, failure_count = self.process_servers_file(server_file_path, ssh_key_path, private_key_path, use_private_key)
 
+        self.worker = Worker(self.process_servers_file, server_file_path, ssh_key_path, private_key_path, use_private_key)
+        self.worker.output.connect(self.output_text.append)
+        self.worker.result.connect(self.handle_add_ssh_key_result)
+        self.worker.start()
+
+    def handle_add_ssh_key_result(self, success_count, failure_count):
         self.output_text.append(f"\n\n总结:\n成功添加密钥到 {success_count} 台服务器。\n添加密钥失败的服务器数量: {failure_count}。\n\n")
 
     def handle_delete_ssh_key(self):
@@ -144,7 +174,12 @@ class SSHKeyManagerApp(QWidget):
             QMessageBox.critical(self, '错误', '服务器信息文件或SSH密钥文件未找到。')
             return
 
-        success_count, failure_count = self.process_servers_file(server_file_path, ssh_key_path, None, False, self.delete_ssh_key_from_server)
+        self.worker = Worker(self.process_servers_file, server_file_path, ssh_key_path, None, False, self.delete_ssh_key_from_server)
+        self.worker.output.connect(self.output_text.append)
+        self.worker.result.connect(self.handle_delete_ssh_key_result)
+        self.worker.start()
+
+    def handle_delete_ssh_key_result(self, success_count, failure_count):
         self.output_text.append(f"\n\n总结:\n成功删除密钥从 {success_count} 台服务器。\n删除密钥失败的服务器数量: {failure_count}。\n\n")
 
     def handle_delete_all_ssh_keys(self):
@@ -154,7 +189,12 @@ class SSHKeyManagerApp(QWidget):
             QMessageBox.critical(self, '错误', '服务器信息文件未找到。')
             return
 
-        success_count, failure_count = self.process_servers_file(server_file_path, None, None, False, self.delete_all_ssh_keys_from_server)
+        self.worker = Worker(self.process_servers_file, server_file_path, None, None, False, self.delete_all_ssh_keys_from_server)
+        self.worker.output.connect(self.output_text.append)
+        self.worker.result.connect(self.handle_delete_all_ssh_keys_result)
+        self.worker.start()
+
+    def handle_delete_all_ssh_keys_result(self, success_count, failure_count):
         self.output_text.append(f"\n\n总结:\n成功删除所有密钥从 {success_count} 台服务器。\n删除所有密钥失败的服务器数量: {failure_count}。\n\n")
 
     def process_servers_file(self, file_path, ssh_key_path, private_key_path, use_private_key, action_func=None):
@@ -279,7 +319,12 @@ class SSHKeyManagerApp(QWidget):
             QMessageBox.critical(self, '错误', '服务器信息文件或SSH私钥文件未找到。')
             return
 
-        success_count, failure_count = self.process_servers_file(server_file_path, private_key_path, None, True, self.test_ssh_key_connection_to_server)
+        self.worker = Worker(self.process_servers_file, server_file_path, private_key_path, None, True, self.test_ssh_key_connection_to_server)
+        self.worker.output.connect(self.output_text.append)
+        self.worker.result.connect(self.test_ssh_key_connection_result)
+        self.worker.start()
+
+    def test_ssh_key_connection_result(self, success_count, failure_count):
         self.output_text.append(f"\n\n总结:\n成功测试密钥连接到 {success_count} 台服务器。\n测试密钥连接失败的服务器数量: {failure_count}。\n\n")
 
     def test_ssh_key_connection_to_server(self, ip, port, username, _, ssh_key_path):
@@ -308,7 +353,12 @@ class SSHKeyManagerApp(QWidget):
             QMessageBox.critical(self, '错误', '服务器信息文件或SSH私钥文件未找到。')
             return
 
-        success_count, failure_count = self.process_servers_file(server_file_path, private_key_path, None, True, self.disable_ssh_password_login_on_server)
+        self.worker = Worker(self.process_servers_file, server_file_path, private_key_path, None, True, self.disable_ssh_password_login_on_server)
+        self.worker.output.connect(self.output_text.append)
+        self.worker.result.connect(self.disable_ssh_password_login_result)
+        self.worker.start()
+
+    def disable_ssh_password_login_result(self, success_count, failure_count):
         self.output_text.append(f"\n\n总结:\n成功关闭SSH密码登录在 {success_count} 台服务器。\n关闭SSH密码登录失败的服务器数量: {failure_count}。\n\n")
 
     def enable_ssh_password_login(self):
@@ -319,8 +369,13 @@ class SSHKeyManagerApp(QWidget):
             QMessageBox.critical(self, '错误', '服务器信息文件或SSH私钥文件未找到。')
             return
 
-        success_count, failure_count = self.process_servers_file(server_file_path, private_key_path, None, True, self.enable_ssh_password_login_on_server)
-        self.output_text.append(f"\n\n总结:\n成功恢复SSH密码登录在 {success_count} 台服务器。\n恢复SSH密码登录失败的服务器数量: {failure_count}。\n\n")
+        self.worker = Worker(self.process_servers_file, server_file_path, private_key_path, None, True, self.enable_ssh_password_login_on_server)
+        self.worker.output.connect(self.output_text.append)
+        self.worker.result.connect(self.enable_ssh_password_login_result)
+        self.worker.start()
+
+    def enable_ssh_password_login_result(self, success_count, failure_count):
+        self.output_text.append(f"\n\n总结:\n成功开启SSH密码登录在 {success_count} 台服务器。\n开启SSH密码登录失败的服务器数量: {failure_count}。\n\n")
 
     def disable_ssh_password_login_on_server(self, ip, port, username, _, ssh_key_path):
         ssh = paramiko.SSHClient()
@@ -356,7 +411,72 @@ class SSHKeyManagerApp(QWidget):
             ssh.exec_command('sudo systemctl restart sshd')
 
             ssh.close()
-            self.output_text.append(f"成功恢复SSH密码登录在 {ip} ，端口 {port} ，用户名 {username}")
+            self.output_text.append(f"成功开启SSH密码登录在 {ip} ，端口 {port} ，用户名 {username}")
+            return True
+        except (paramiko.AuthenticationException, paramiko.SSHException, Exception) as e:
+            self.output_text.append(f"连接 {ip} ，端口 {port} ，用户名 {username} 失败: {e}")
+        return False
+# 公钥登录
+    def disable_ssh_Pubkey_login(self):
+        server_file_path = self.server_file_edit.text()
+
+        if not os.path.isfile(server_file_path):
+            QMessageBox.critical(self, '错误', '服务器信息文件未找到。')
+            return
+
+        self.worker = Worker(self.process_servers_file, server_file_path, None, None, False, self.disable_ssh_Pubkey_login_on_server)
+        self.worker.output.connect(self.output_text.append)
+        self.worker.result.connect(self.disable_ssh_Pubkey_login_result)
+        self.worker.start()
+
+    def disable_ssh_Pubkey_login_result(self, success_count, failure_count):
+        self.output_text.append(f"\n\n总结:\n成功关闭公钥SSH密码登录在 {success_count} 台服务器。\n关闭SSH密码登录失败的服务器数量: {failure_count}。\n\n")
+
+    def enable_ssh_Pubkey_login(self):
+        server_file_path = self.server_file_edit.text()
+
+        if not os.path.isfile(server_file_path):
+            QMessageBox.critical(self, '错误', '服务器信息文件未找到。')
+            return
+
+        self.worker = Worker(self.process_servers_file, server_file_path, None, None, False, self.enable_ssh_Pubkey_login_on_server)
+        self.worker.output.connect(self.output_text.append)
+        self.worker.result.connect(self.enable_ssh_Pubkey_login_result)
+        self.worker.start()
+
+    def enable_ssh_Pubkey_login_result(self, success_count, failure_count):
+        self.output_text.append(f"\n\n总结:\n成功开启SSH公钥登录在 {success_count} 台服务器。\n开启SSH密码登录失败的服务器数量: {failure_count}。\n\n")
+
+    def disable_ssh_Pubkey_login_on_server(self, ip, port, username, password, _):
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        try:
+            self.output_text.append(f"正在连接 {ip} ，端口 {port} ，用户名 {username}...")
+            ssh.connect(ip, port=port, username=username, password=password)
+
+            ssh.exec_command('sudo sed -i "s/^#*PubkeyAuthentication yes/PubkeyAuthentication no/" /etc/ssh/sshd_config')
+            ssh.exec_command('sudo systemctl restart sshd')
+
+            ssh.close()
+            self.output_text.append(f"成功关闭SSH公钥登录在 {ip} ，端口 {port} ，用户名 {username}")
+            return True
+        except (paramiko.AuthenticationException, paramiko.SSHException, Exception) as e:
+            self.output_text.append(f"连接 {ip} ，端口 {port} ，用户名 {username} 失败: {e}")
+        return False
+
+    def enable_ssh_Pubkey_login_on_server(self, ip, port, username, password, _):
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        try:
+            self.output_text.append(f"正在连接 {ip} ，端口 {port} ，用户名 {username}...")
+            ssh.connect(ip, port=port, username=username, password=password)
+            ssh.exec_command('sudo sed -i "s/^#*PubkeyAuthentication no/PubkeyAuthentication yes/" /etc/ssh/sshd_config')
+            ssh.exec_command('sudo systemctl restart sshd')
+
+            ssh.close()
+            self.output_text.append(f"成功开启SSH公钥登录在 {ip} ，端口 {port} ，用户名 {username}")
             return True
         except (paramiko.AuthenticationException, paramiko.SSHException, Exception) as e:
             self.output_text.append(f"连接 {ip} ，端口 {port} ，用户名 {username} 失败: {e}")
